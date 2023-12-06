@@ -243,13 +243,14 @@ def main():
             num_res_units=2,
             act='PRELU',
             norm=monai.networks.layers.Norm.BATCH,
-            dropout=0,
-            bias=True,
+            ###dropout=0,
+            ###bias=True,
             adn_ordering='NDA'
         ),
         LosSpec(
-            torch.nn.BCEWithLogitsLoss,
-            # weight=ratio
+            ###DiceLoss,
+            ###sigmoid=True,
+            torch.nn.BCEWithLogitsLoss
         ),
         OptSpec(
             torch.optim.Adam,
@@ -257,15 +258,15 @@ def main():
         ),
         LrsSpec(
             torch.optim.lr_scheduler.StepLR,
-            step_size=2,
+            step_size=1000, # decrease every step_size epoch by gamma
             gamma=0.1
         )
     )
 
     # training parameters
-    max_epochs = 100
-    val_interval = 2 # validate every val_interval epochs
-    save_interval = 2 # save checkpoint every save_interval epochs
+    max_epochs = 1000
+    val_interval = 100 # validate every val_interval epochs
+    save_interval = 100 # save checkpoint every save_interval epochs
     
     # pad so that images are divisible by k
     # k == 2^len(layers)
@@ -303,16 +304,16 @@ def main():
         ),
         
         # augment data to be invariant to orientation
-        #mt.RandFlipd(keys=KEYS, prob=0.5, spatial_axis=0),
-        #mt.RandFlipd(keys=KEYS, prob=0.5, spatial_axis=1),
-        #mt.RandFlipd(keys=KEYS, prob=0.5, spatial_axis=2),
+        ###mt.RandFlipd(keys=KEYS, prob=0.5, spatial_axis=0),
+        ###mt.RandFlipd(keys=KEYS, prob=0.5, spatial_axis=1),
+        ###mt.RandFlipd(keys=KEYS, prob=0.5, spatial_axis=2),
         
         # normalize intensity
         mt.NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
         
         # augment data to be invariant to intensity shift or scale
-        #mt.RandScaleIntensityd(keys="image", factors=0.1, prob=0.1),
-        #mt.RandShiftIntensityd(keys="image", offsets=0.1, prob=0.1),
+        ###mt.RandScaleIntensityd(keys="image", factors=0.1, prob=0.1),
+        ###mt.RandShiftIntensityd(keys="image", offsets=0.1, prob=0.1),
         
         # pad data to be divisible
         mt.DivisiblePadD(keys=KEYS, k=k),
@@ -396,7 +397,7 @@ def main():
         # configure additional things to do during validation
         val_handlers = [
             # apply “EarlyStop” logic based on the validation metrics
-            EarlyStopHandler(trainer=None, patience=2, score_function=lambda x: x.state.metrics["val_mean_dice"]),
+            ###EarlyStopHandler(trainer=None, patience=2, score_function=lambda x: x.state.metrics["val_mean_dice"]),
             # use the logger "train_log" defined at the beginning of this program
             # for simple logging
             StatsHandler(name="train_log", output_transform=lambda x: None),
@@ -437,9 +438,9 @@ def main():
         # additional things to do during training
         train_handlers = [
             # apply “EarlyStop” logic based on the loss value, use “-” negative value because smaller loss is better
-            # early stop based on change in loss over iterations (not epoch)
+            # early stop based on change in loss over epoch
             EarlyStopHandler(
-                trainer=None, patience=20, score_function=lambda x: -x.state.output[0]["loss"], epoch_level=False
+                trainer=None, patience=3, score_function=lambda x: -x.state.output[0]["loss"], epoch_level=True
             ),
             LrScheduleHandler(lr_scheduler=lr_scheduler, print_lr=True), # handle learning rate
             ValidationHandler(validator=evaluator, interval=val_interval, epoch_level=True), # validate
@@ -463,8 +464,8 @@ def main():
             amp=True, # amp
             train_handlers=train_handlers, # additional things to do during training
             # in case wanting to use following metric to save checkpoint
-    #         postprocessing=train_post_transforms,
-    #         key_train_metric={"train_acc": Accuracy(output_transform=from_engine(["pred", "label"]))},
+            # postprocessing=train_post_transforms,
+            # key_train_metric={"train_acc": Accuracy(output_transform=from_engine(["pred", "label"]))},
         )
         
         # things to save
@@ -499,7 +500,7 @@ def main():
         
         
         # set initialized trainer for "early stop" handlers
-        val_handlers[0].set_trainer(trainer=trainer)
+        ###val_handlers[0].set_trainer(trainer=trainer)
         train_handlers[0].set_trainer(trainer=trainer)
         # if loading
         if checkpoint_path:
