@@ -159,6 +159,26 @@ def print_data(metatensor):
     print(metatensor.meta)
     return metatensor
 
+    
+class MySlidingWindowInferer(SlidingWindowInferer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def __call__(self, inputs, network, *args, **kwargs):
+        print(f"sw input shape: {inputs.shape}")
+        print(f"sw output shape: {network(inputs).shape}")
+        return super().__call__(inputs, network, *args, **kwargs)
+        
+
+class MyUNet(UNet):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def forward(self, x):
+        print(f"before forward shape: {x.shape}")
+        x = super().forward(x)
+        print(f"after forward shape: {x.shape}")
+        return x
 
 
 # main
@@ -199,10 +219,6 @@ def main():
 
     # ratio of classes
     ratio = torch.Tensor([2500])
-
-    # pad so that images are divisible by k
-    # k == 2^len(strides)
-    k = 16
 
     # number of folds
     num = 2
@@ -251,8 +267,13 @@ def main():
     val_interval = 2 # validate every val_interval epochs
     save_interval = 2 # save checkpoint every save_interval epochs
     
+    # pad so that images are divisible by k
+    # k == 2^len(layers)
+    k = 2**len(spec_comb.modspec.kwargs['channels'])
+    
     # sliding window inference parameters
-    roi_size = (120, 120, 76)
+    roi_factor = 0.5
+    overlap = 0.5
     sw_batch_size = 4
     
     # if need to resume training
@@ -343,6 +364,20 @@ def main():
     val_loaders = [DataLoader(val_dss[i], batch_size=batch_size, num_workers=num_workers) for i in folds]
 
 
+    # get shape of image
+    sample = next(iter(train_loaders[0]))['image']
+    print(f"input shape: {sample.shape}")
+    
+    # set roi size
+    offset = 2
+    roi_size = tuple(int(sample.shape[i] * roi_factor) for i in range(offset, len(sample.shape)))
+    # (input/roi) is divisible by one or the other
+    print(f"roi_size: {roi_size}")
+    for i in range(offset, len(sample.shape)):
+        if not (sample.shape[i] % roi_size[i - offset] == 0 or roi_size[i - offset] % sample.shape[i] == 0):
+            raise ValueError(f"{sample.shape[i]}, {roi_size[i - offset]} not divisible")
+
+
     # train function
     def train(spec_comb, index=0, checkpoint_path=None):
         # instantiate net, loss, opt
@@ -380,7 +415,7 @@ def main():
             device=device, # device
             val_data_loader=val_loaders[index], # validation data
             network=net, # network
-            inferer=SlidingWindowInferer(roi_size=roi_size, sw_batch_size=sw_batch_size, overlap=0.5), # infer using sw
+            inferer=SlidingWindowInferer(roi_size=roi_size, sw_batch_size=sw_batch_size, overlap=overlap), # infer using sw
             postprocessing=val_post_transforms, # post processing
             # metric
             key_val_metric={
@@ -390,7 +425,7 @@ def main():
                 )
             },
             val_handlers=val_handlers, # additional things to do during validation
-            amp=True # enable auto mixed precision for performance boost
+            amp=True, # enable auto mixed precision for performance boost
         )
         
         # post processing transformations for training
