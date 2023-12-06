@@ -279,8 +279,9 @@ def main():
     
     # if need to resume training
     checkpoint_paths = []
-    checkpoint_paths += ([None] * (num - len(checkpoint_paths))
-    assert len(checkpoint_paths == num)
+    checkpoint_paths += [None] * (num - len(checkpoint_paths))
+    print(f"checkpoint paths: {checkpoint_paths}")
+    assert len(checkpoint_paths) == num
     #---------------------------------------#
 
 
@@ -441,7 +442,7 @@ def main():
             # apply “EarlyStop” logic based on the loss value, use “-” negative value because smaller loss is better
             # early stop based on change in loss over epoch
             EarlyStopHandler(
-                trainer=None, patience=3, score_function=lambda x: -x.state.output[0]["loss"], epoch_level=True
+                trainer=None, patience=10, score_function=lambda x: -x.state.output[0]["loss"], epoch_level=True
             ),
             LrScheduleHandler(lr_scheduler=lr_scheduler, print_lr=True), # handle learning rate
             ValidationHandler(validator=evaluator, interval=val_interval, epoch_level=True), # validate
