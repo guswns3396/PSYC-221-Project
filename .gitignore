@@ -1,4 +1,3 @@
 cache_dir/
 .ipynb_checkpoints/
-best_metric_model.pth
-model_checkpoint.pt
+log_file
