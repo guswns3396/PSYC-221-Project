@@ -218,7 +218,8 @@ def main():
     data_dicts = data_dicts[:2]
 
     # ratio of classes
-    ratio = torch.Tensor([2500])
+    ###ratio = torch.Tensor([2500]).to(device)
+    ratio = torch.Tensor([10]).to(device)
 
     # number of folds
     num = 2
@@ -248,9 +249,8 @@ def main():
             adn_ordering='NDA'
         ),
         LosSpec(
-            ###DiceLoss,
-            ###sigmoid=True,
-            torch.nn.BCEWithLogitsLoss
+            torch.nn.BCEWithLogitsLoss,
+            weight=ratio
         ),
         OptSpec(
             torch.optim.Adam,
@@ -278,8 +278,9 @@ def main():
     sw_batch_size = 4
     
     # if need to resume training
-    curr_fold = 0
-    checkpoint_paths = [] + ([None] * (num - curr_fold))
+    checkpoint_paths = []
+    checkpoint_paths += ([None] * (num - len(checkpoint_paths))
+    assert len(checkpoint_paths == num)
     #---------------------------------------#
 
 
@@ -513,7 +514,7 @@ def main():
 
 
     # train model
-    for idx, path in zip(range(curr_fold, num), checkpoint_paths):
+    for idx, path in enumerate(checkpoint_paths):
         train(spec_comb, index=idx, checkpoint_path=path)
     
     # remove cache
