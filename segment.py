@@ -27,6 +27,7 @@ from monai.handlers import (
     EarlyStopHandler,
     LrScheduleHandler,
     MeanDice,
+    ROCAUC,
     StatsHandler,
     TensorBoardImageHandler,
     TensorBoardStatsHandler,
@@ -215,19 +216,21 @@ def main():
     #---------------------------------------#
     # get data
     data_dicts = get_data_dicts(PATH_TRAIN)
-    data_dicts = data_dicts[:2]
+    ###data_dicts = data_dicts[:5]
 
     # ratio of classes
-    ###ratio = torch.Tensor([2500]).to(device)
-    ratio = torch.Tensor([10]).to(device)
+    ratio = torch.Tensor([2500]).to(device)
+    ###ratio = torch.Tensor([10]).to(device)
 
     # number of folds
-    num = 2
+    num = 3
     folds = list(range(num))
 
     # for data loaders
-    num_workers=0
-    batch_size=1
+    num_workers=4
+    ###num_workers=0
+    batch_size_train=8
+    batch_size_val=1
 
     # specify model
     spec_comb = SpecComb(
@@ -236,37 +239,40 @@ def main():
             UNet,
             spatial_dims=3, # 3D
             in_channels=4, # 4 modalities
-            out_channels=1, # 1 channel for output
-            channels=(8, 16, 32, 64, 128), # layers
+            out_channels=1, # channel for output
+            ###channels=(8, 16, 32, 64, 128), # layers
+            channels=(16, 32, 64, 128, 256),
             strides=(2, 2, 2, 2),
             kernel_size=3,
             up_kernel_size=3,
             num_res_units=2,
             act='PRELU',
             norm=monai.networks.layers.Norm.BATCH,
-            ###dropout=0,
+            dropout=0.25,
             ###bias=True,
             adn_ordering='NDA'
         ),
         LosSpec(
             torch.nn.BCEWithLogitsLoss,
             weight=ratio
+            ###DiceLoss,
+            ###sigmoid=True
         ),
         OptSpec(
             torch.optim.Adam,
             lr=1e-3
         ),
         LrsSpec(
-            torch.optim.lr_scheduler.StepLR,
-            step_size=1000, # decrease every step_size epoch by gamma
+            torch.optim.lr_scheduler.MultiStepLR,
+            milestones=[30], # decrease every step_size epoch by gamma
             gamma=0.1
         )
     )
 
     # training parameters
-    max_epochs = 1000
-    val_interval = 100 # validate every val_interval epochs
-    save_interval = 100 # save checkpoint every save_interval epochs
+    max_epochs = 30
+    val_interval = 2 # validate every val_interval epochs
+    save_interval = 2 # save checkpoint every save_interval epochs
     
     # pad so that images are divisible by k
     # k == 2^len(layers)
@@ -278,6 +284,7 @@ def main():
     sw_batch_size = 4
     
     # if need to resume training
+    ###run_id = ""
     checkpoint_paths = []
     checkpoint_paths += [None] * (num - len(checkpoint_paths))
     print(f"checkpoint paths: {checkpoint_paths}")
@@ -297,6 +304,11 @@ def main():
         mt.LambdaD(KEYS, fix_meta),
         # make sure tensor type
         mt.EnsureTypeD(keys=KEYS),
+        
+        # scale intensity to [0,1]
+        mt.ScaleIntensityd(keys="image", channel_wise=True),
+        # removes all zero borders to focus on the valid body area of the images and labels
+        mt.CropForegroundd(keys=KEYS, source_key="image"),
         # make sure all have same orientation (axcode)
         mt.Orientationd(keys=KEYS, axcodes="RAS"),
         mt.Spacingd(
@@ -305,17 +317,40 @@ def main():
           mode=("bilinear", "nearest"),
         ),
         
-        # augment data to be invariant to orientation
-        ###mt.RandFlipd(keys=KEYS, prob=0.5, spatial_axis=0),
-        ###mt.RandFlipd(keys=KEYS, prob=0.5, spatial_axis=1),
-        ###mt.RandFlipd(keys=KEYS, prob=0.5, spatial_axis=2),
+        # randomly crop patch samples from big image based on pos / neg ratio
+        mt.RandCropByPosNegLabeld(
+            keys=["image", "label"],
+            label_key="label",
+            spatial_size=(96, 96, 96),
+            pos=1,
+            neg=1,
+            num_samples=4,
+            image_key="image",
+            image_threshold=0,
+        ),
         
-        # normalize intensity
-        mt.NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
+        # invariant to affine tranformations
+        mt.RandAffined(
+            keys=['image', 'label'],
+            mode=('bilinear', 'nearest'),
+            prob=1, #spatial_size=(96, 96, 96),
+            rotate_range=(0, 0, np.pi/15),
+            scale_range=(0.1, 0.1, 0.1)
+        ),
         
-        # augment data to be invariant to intensity shift or scale
-        ###mt.RandScaleIntensityd(keys="image", factors=0.1, prob=0.1),
-        ###mt.RandShiftIntensityd(keys="image", offsets=0.1, prob=0.1),
+        
+        mt.Rand3DElasticd(
+            keys=["image", "label"],
+            mode=("bilinear", "nearest"),
+            prob=1.0,
+            sigma_range=(5, 8),
+            magnitude_range=(100, 200),
+            #spatial_size=(96, 96, 96),
+            translate_range=(50, 50, 2),
+            rotate_range=(np.pi / 36, np.pi / 36, np.pi),
+            scale_range=(0.15, 0.15, 0.15),
+            padding_mode="border",
+        ),
         
         # pad data to be divisible
         mt.DivisiblePadD(keys=KEYS, k=k),
@@ -330,6 +365,11 @@ def main():
         mt.LambdaD(KEYS, fix_meta),
         # make sure tensor type
         mt.EnsureTypeD(keys=KEYS),
+        
+        # scale intensity to [0,1]
+        mt.ScaleIntensityd(keys="image", channel_wise=True),
+        # removes all zero borders to focus on the valid body area of the images and labels
+        mt.CropForegroundd(keys=KEYS, source_key="image"),
         # make sure all have same orientation (axcode)
         mt.Orientationd(keys=KEYS, axcodes="RAS"),
         mt.Spacingd(
@@ -337,8 +377,6 @@ def main():
           pixdim=(1.0, 1.0, 1.0),
           mode=("bilinear", "nearest"),
         ),
-        # normalize intensity
-        mt.NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
         # pad data to be divisible
         mt.DivisiblePadD(keys=KEYS, k=k),
     ])
@@ -363,8 +401,8 @@ def main():
     val_dss = [cvdataset.get_dataset(folds=i, transform=xform_val) for i in folds]
 
     # get loaders & set batch size, number of workers, shuffle
-    train_loaders = [DataLoader(train_dss[i], batch_size=batch_size, shuffle=True, num_workers=num_workers) for i in folds]
-    val_loaders = [DataLoader(val_dss[i], batch_size=batch_size, num_workers=num_workers) for i in folds]
+    train_loaders = [DataLoader(train_dss[i], batch_size=batch_size_train, shuffle=True, num_workers=num_workers, pin_memory=torch.cuda.is_available()) for i in folds]
+    val_loaders = [DataLoader(val_dss[i], batch_size=batch_size_val, num_workers=num_workers, pin_memory=torch.cuda.is_available()) for i in folds]
 
 
     # get shape of image
@@ -386,7 +424,7 @@ def main():
         # instantiate net, loss, opt
         net, loss, opt, lr_scheduler = spec_comb(device)
         
-        print(f"Model on CUDA? {next(net.parameters()).is_cuda}")
+        print(f"Model on CUDA? {next(net.parameters()).device}")
         print(net)
 
         # post processing transformations for validation
@@ -395,11 +433,12 @@ def main():
             mt.Activationsd(keys="pred", sigmoid=True), # take sigmoid activation of values
             mt.AsDiscreted(keys="pred", threshold=0.5)] # turn into 0, 1
         )
+
         
         # configure additional things to do during validation
         val_handlers = [
             # apply “EarlyStop” logic based on the validation metrics
-            ###EarlyStopHandler(trainer=None, patience=2, score_function=lambda x: x.state.metrics["val_mean_dice"]),
+            ###EarlyStopHandler(trainer=None, patience=10, score_function=lambda x: x.state.metrics["val_mean_dice"]),
             # use the logger "train_log" defined at the beginning of this program
             # for simple logging
             StatsHandler(name="train_log", output_transform=lambda x: None),
@@ -423,19 +462,22 @@ def main():
             # metric
             key_val_metric={
                 "val_mean_dice": MeanDice(
-                    include_background=True,
                     output_transform=from_engine(["pred", "label"]),
+                    num_classes=2
                 )
             },
+            ###additional_metrics={
+            ###    "val_rocauc": ROCAUC(output_transform=from_engine(["pred", "label"]))
+            ###},
             val_handlers=val_handlers, # additional things to do during validation
             amp=True, # enable auto mixed precision for performance boost
         )
         
         # post processing transformations for training
-        train_post_transforms = mt.Compose([
-            mt.Activationsd(keys="pred", sigmoid=True), # take sigmoid activation of values
-            mt.AsDiscreted(keys="pred", threshold=0.5) # turn into 0, 1
-        ])
+        ###train_post_transforms = mt.Compose([
+        ###    mt.Activationsd(keys="pred", sigmoid=True), # take sigmoid activation of values
+        ###    mt.AsDiscreted(keys="pred", threshold=0.5) # turn into 0, 1
+        ###])
         
         # additional things to do during training
         train_handlers = [
@@ -466,8 +508,8 @@ def main():
             amp=True, # amp
             train_handlers=train_handlers, # additional things to do during training
             # in case wanting to use following metric to save checkpoint
-            # postprocessing=train_post_transforms,
-            # key_train_metric={"train_acc": Accuracy(output_transform=from_engine(["pred", "label"]))},
+            ###postprocessing=train_post_transforms,
+            ###key_train_metric={"train_acc": Accuracy(output_transform=from_engine(["pred", "label"]))},
         )
         
         # things to save
@@ -512,7 +554,7 @@ def main():
         trainer.run()
         
         return net
-
+        
 
     # train model
     for idx, path in enumerate(checkpoint_paths):
