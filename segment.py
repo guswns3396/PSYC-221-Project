@@ -223,7 +223,7 @@ def main():
     ###ratio = torch.Tensor([10]).to(device)
 
     # number of folds
-    num = 3
+    num = 5
     folds = list(range(num))
 
     # for data loaders
@@ -248,7 +248,7 @@ def main():
             num_res_units=2,
             act='PRELU',
             norm=monai.networks.layers.Norm.BATCH,
-            dropout=0.25,
+            dropout=0.1,
             ###bias=True,
             adn_ordering='NDA'
         ),
@@ -264,13 +264,13 @@ def main():
         ),
         LrsSpec(
             torch.optim.lr_scheduler.MultiStepLR,
-            milestones=[30], # decrease every step_size epoch by gamma
+            milestones=[3, 9], # decrease every step_size epoch by gamma
             gamma=0.1
         )
     )
 
     # training parameters
-    max_epochs = 30
+    max_epochs = 12
     val_interval = 2 # validate every val_interval epochs
     save_interval = 2 # save checkpoint every save_interval epochs
     
